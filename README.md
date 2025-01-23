@@ -1,7 +1,7 @@
 # Automated Data Validation for Handgrip Strength Measurements
 
 ## Project Overview
-This project automates the validation process for handgrip strength data collected from research tools. It addresses the challenge of managing and analyzing large volumes of data spread across multiple Excel files, typically one file per measurement. To help you get started, I have included a sample dataset (sample_data.csv) that represents the type of data this tool is designed to process. Please feel free to leave any feedback :)
+This project automates the validation process for handgrip strength data collected from research tools. It addresses the challenge of managing and analyzing large volumes of data spread across multiple Excel files, typically one file per measurement. To help you get started, I have included a sample dataset (sample_data.csv) that represents the type of data this tool is designed to process.
 
 ## Key Features
 1. **Automated Data Processing**: Efficiently processes hundreds or thousands of Excel files.
