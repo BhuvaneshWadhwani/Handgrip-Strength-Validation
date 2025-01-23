@@ -1,0 +1,319 @@
+---
+title: "HGS_full"
+output: html_document
+date: "2024-02-28"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+#installing required pacakges
+```{r}
+packages_to_use<- c("tidyverse", "dplyr", "ggplot2", "psych", "readxl", "writexl", "openxlsx", "gridExtra", "stringr", "png", "grid", "tools", "patchwork", "purrr")
+
+for(i in packages_to_use){
+  if( ! i %in% rownames(installed.packages())  ) {
+    print(paste(i, "not installed; installing now:\n") )
+    install.packages(i)
+  }
+  
+  require(i, character.only = TRUE)
+}
+
+
+```
+
+
+# Fill up details
+```{r}
+# If the rest of the code has been tailored to your specific type of data and desired outcomes, you only need to fill in the desire file names here and run all the codes in this file. There is no  need to alter anything else
+
+# Desired filename
+desired_filename <- "" 
+
+# Input folder path
+input_folder <- "" #make sure to change. Use forward slash "/" between paths
+
+# Create output folder if it doesn't exist
+output_folder <- "" #make sure to change. Use forward slash "/" between paths
+
+if (!dir.exists(output_folder)) {
+  dir.create(output_folder, recursive = TRUE)
+}
+```
+
+
+
+# Create PDF file containing all graphs
+```{r}
+xlsx_filename <- file.path(output_folder, paste0(desired_filename, ".xlsx")) #output will be an xlsx file. Change this to .csv if you want it as a csv file instead.
+pdf_filename <- paste0(desired_filename, ".pdf")
+
+# Get a list of CSV files from the input folder
+csv_files <- list.files(path = input_folder, pattern = "\\.csv$", full.names = TRUE) #raw data files were originally in csv format. Change to .xlsx if needed.
+
+plot_graphs <- function(csv_file_path) {
+  i <- which(csv_files == csv_file_path)
+  # Extract the filename without extension
+  file_name <- tools::file_path_sans_ext(basename(csv_file_path))
+
+  # Read the CSV file, skipping the first row (There are two header rows)
+  data <- read.csv(csv_file_path, header = TRUE, skip = 1)
+  # Check if the data frame has any rows, for faulty excel files
+  if (nrow(data) == 0) {
+    cat("Warning empty file:", file_name, "\n")
+  }
+  # Check if the second column has any non-missing values
+  if (any(!is.na(data[[2]]) & data[[2]] != "")) {
+    # Create a line graph with filename as title
+    graph <- ggplot(data, aes(x = seq_along(data[[2]]), y = data[[2]])) + #oddly, the data appeared in the second column instead of the first. Change to 1 if yours is in the first column.
+      geom_line(color = "dodgerblue4") +
+      labs(title = file_name, x = "", y = "") +  # Use filename as the title. Filenames are Subject IDs at the same time
+      theme_bw() +
+      theme(axis.text = element_text(size = 10),
+            plot.margin = margin(20, 20, 20, 20),
+            plot.title = element_text(size = 10))
+  } else {
+    # If the second column is empty, create a default plot
+    graph <- ggplot() +
+      theme_void() +
+      labs(title = file_name)
+  }
+  return(graph)
+}
+ 
+ 
+listofgraphs <- lapply(csv_files, function(csv_file_path) {plot_graphs(csv_file_path)})
+
+
+# Function to extract SubjectID from filename
+extract_subject_id <- function(file_path) {
+  basename <- tools::file_path_sans_ext(file_path)
+  str_match(basename, "\\d{3}-(\\d{5})")[, 2] #change to your needs
+}
+
+# Convert list of graphs into a tibble with SubjectID
+graph_df <- tibble(
+  file_path = csv_files,
+  graph = listofgraphs
+) %>%
+  mutate(
+    SubjectID = map_chr(file_path, extract_subject_id)
+  ) %>%
+  select(-file_path)
+
+# Group by SubjectID
+grouped_graphs <- graph_df %>% # Each subject did 3 tests. This line makes it so that all 3 tests belonging to the same SubjectID appears on the same page. Adjust as needed.
+  group_by(SubjectID) %>%
+  nest()
+
+# Arrange graphs
+grouped_graphs <- grouped_graphs %>%
+  mutate(arranged_plots = map(data, ~ marrangeGrob(grobs = .x$graph, nrow = 1, ncol = 3)))
+
+pdf_file <- file.path(output_folder, pdf_filename) 
+pdf(pdf_file, width = 12, height = 3.5)
+for (i in 1:length(grouped_graphs$arranged_plots)) {
+  print(grouped_graphs$arranged_plots[[i]])
+}
+dev.off()
+```
+
+
+
+
+# Calculate highest handgrip strength in each excel file
+```{r}
+#create empty df
+result_df <- data.frame(SubjectID = character(),
+                         highest_value = numeric(),
+                        measure = character(),
+                        stringsAsFactors = FALSE)
+
+# Iterate over each Excel file
+for (i in csv_files) {
+  data <- read.csv(i, header = FALSE)
+  
+  if (nrow(data) <= 2) {
+    next
+  }
+  
+  # Read the Excel file, skipping the first two rows (double header)
+  data <- read.csv(i, header = FALSE, skip = 2)
+  
+  # Extract highest value
+  max_values <- data %>%
+    mutate(Device1_numeric = as.numeric(data[[2]])) %>%
+    summarise(max_device = max(Device1_numeric, na.rm = TRUE))
+  
+  # Read the Excel file, without skip 
+  measure_data <- read.csv(i, header = FALSE)
+  
+  # Extract device measure
+  device_measure <- measure_data[[3]][1] # The measure (Newton or Kg Force), appears in column 3 row row 1. Adjust as needed.
+  
+  subject_id <- tools::file_path_sans_ext(basename(i))
+  
+  # Append the result to the result_df
+  result_df <- bind_rows(result_df, data.frame(SubjectID = subject_id,
+                                                               highest_value = max_values$max_device,
+                                                               measure = device_measure))
+}
+
+
+colnames(result_df) <- c("SubjectID", "highest_value", "measure")
+head(result_df)
+tail(result_df)
+
+result_df$measure
+
+nrow(result_df)
+
+result_df$highest_value <- as.numeric(result_df$highest_value)
+
+```
+
+
+
+
+# Fix wrong measures
+```{r}
+#find out how many measures are not in Newton
+measure_counts <- table(result_df$measure)
+print(measure_counts)
+
+#convert kgf to N
+result_df <- result_df %>%
+  mutate(highest_value = ifelse(measure == "kgf", highest_value * 9.80665, highest_value)) %>%
+  mutate(measure = ifelse(measure %in% c("kgf"), "N", measure))
+
+#convert lb to N
+result_df <- result_df %>%
+  mutate(highest_value = ifelse(measure == "lb", highest_value * 4.44822, highest_value)) %>%
+  mutate(measure = ifelse(measure %in% c("lb"), "N", measure))
+
+measure_counts2 <- table(result_df$measure)
+print(measure_counts2)
+#max(result_df$highest_value)
+
+```
+
+
+
+# Split by test
+```{r}
+df_ending_1 <- result_df %>%
+  filter(grepl("Test1$|test1$|Test 1$|test 1$|TEST1$|TEST 1$|tes1$|tes 1$|Test1csv$|test1csv$", SubjectID)) #done to ensure even typos filenames can be detected. Adjust as needed.
+colnames(df_ending_1) <- c("SubjectID", "Test1", "Test1_measure")
+df_ending_1$SubjectID <- gsub(".*_(\\d{3}-\\d{5}).*", "\\1", df_ending_1$SubjectID)
+df_ending_1 <- df_ending_1 %>%
+  select(SubjectID, Test1, Test1_measure)
+head(df_ending_1)
+
+
+
+df_ending_2 <- result_df %>%
+  filter(grepl("Test2$|test2$|Test 2$|test 2$|TEST2$|TEST 2$|tes2$|tes 2$|Test2csv$|test2csv$", SubjectID))
+colnames(df_ending_2) <- c("SubjectID", "Test2", "Test2_measure")
+df_ending_2$SubjectID <- gsub(".*_(\\d{3}-\\d{5}).*", "\\1", df_ending_2$SubjectID)
+df_ending_2 <- df_ending_2 %>%
+  select(SubjectID, Test2, Test2_measure)
+head(df_ending_2)
+
+
+
+df_ending_3 <- result_df %>%
+  filter(grepl("Test3$|test3$|Test 3$|test 3$|TEST3$|TEST 3$|tes3$|tes 3$|Test3csv$|test3csv$", SubjectID))
+colnames(df_ending_3) <- c("SubjectID", "Test3", "Test3_measure")
+df_ending_3$SubjectID <- gsub(".*_(\\d{3}-\\d{5}).*", "\\1", df_ending_3$SubjectID)
+df_ending_3 <- df_ending_3 %>%
+  select(SubjectID, Test3, Test3_measure)
+head(df_ending_3)
+
+
+```
+
+
+# Combined all 3 dataframes
+```{r}
+#get all unique subjectids
+dfe1_sub <- df_ending_1 %>%
+  select("SubjectID")
+dfe2_sub <- df_ending_2 %>%
+  select("SubjectID")
+dfe3_sub <- df_ending_3 %>%
+  select("SubjectID")
+
+unique_subjectid <- unique(rbind(dfe1_sub, dfe2_sub, dfe3_sub))
+head(unique_subjectid)
+
+#combine df
+combined_result <- unique_subjectid %>%
+  left_join(df_ending_1, by = "SubjectID") %>%
+  left_join(df_ending_2, by = "SubjectID") %>%
+  left_join(df_ending_3, by = "SubjectID")
+
+head(combined_result)
+
+
+
+```
+
+```{r}
+#take highest of test1 and test2
+combined_result$final_handgrip_N <- pmax(combined_result$Test1, combined_result$Test2, na.rm = TRUE) # Test 3 is a different condition, so only test 1 and 2 are compared.
+
+#how many <100
+sum(combined_result$final_handgrip_N < 100) 
+
+final_result <- combined_result#[combined_result$final_handgrip_N >= 100, ]
+
+```
+
+
+# Split according to cutoffs (18kg)
+```{r}
+# Assuming 1 Newton is approximately equal to 0.1019716213 kg
+conversion_factor <- 0.1019716213
+
+# Convert Final_handgrip from Newtons to kg
+final_result$final_handgrip_kg <- final_result$final_handgrip_N * conversion_factor
+
+
+
+# Create a new variable to categorize the handgrip strength
+final_result$Muscle_Strength <- ifelse(final_result$final_handgrip_kg < 18.00, "Low ", "Normal/High")
+final_result$Higher_Test3 <- ifelse(final_result$Test3 > final_result$final_handgrip_N, "Yes", "No")
+head(final_result)
+tail(final_result)
+
+final_result$Test1_qc <- NA  
+final_result$Test2_qc <- NA  
+final_result$Test3_qc <- NA 
+
+final_result <- final_result %>%
+  select(SubjectID, Test1, Test2, Test1_qc, Test2_qc, Test1_measure, Test2_measure, final_handgrip_N, final_handgrip_kg, Muscle_Strength, Higher_Test3, Test3, Test3_measure, Test3_qc)
+
+# Specify columns to round
+columns_to_round <- c("Test1", "Test2", "final_handgrip_N", "final_handgrip_kg", "Test3")
+
+# Apply rounding only to specified columns
+final_result[columns_to_round] <- round(final_result[columns_to_round], 1)
+
+ 
+```
+
+
+
+```{r}
+write_xlsx(final_result, xlsx_filename,
+           col_names = TRUE)
+```
+
+
+#Make sure to check empty cells against the original file. Sometimes they have data but are not read by the code. 
+
+
