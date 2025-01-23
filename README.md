@@ -23,4 +23,5 @@ Research involving handgrip strength, eyetracking, and similar measurements ofte
    a. Produces PDF files with line graphs, grouped by participant.
    b. Compiles extracted data into a summary format (e.g., CSV or Excel).
 
-
+## Feedback
+Your feedback is always welcome! Feel free to share any suggestions or improvements you might have.
